@@ -12,14 +12,13 @@ from model import IncResNet
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 writer = SummaryWriter(comment = "malware_classification%resnet34")          
 ex = Experiment("malware_classification_resnet34")
 
 @ex.config
 def cfg():
-    num_epoch_pretrain = 2
+    num_epoch_pretrain = 1
     num_epoch_inc_train = 2
     start_num_class = 20
     num_class_per_session = 5
@@ -53,9 +52,7 @@ def train(
 
     inc_data = IncrementalDataset(dataset_name, data_folder, start_num_class=start_num_class, num_class_per_session=num_class_per_session, val_ratio=val_ratio, test_ratio=test_ratio, batch_size=batch_size)
     model = IncResNet(num_block=[3, 4, 6, 3], base_num_classes=20).to(device)    
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    if device == torch.device("cuda"):
-        model = nn.DataParallel(model, device_ids=device_ids)                
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)    
 
     start_session = 0
     start_epoch = 0    
@@ -74,12 +71,12 @@ def train(
         
 
     for i in range(start_session, 1 + (n_cls - start_num_class) // num_class_per_session):
-        if start_session == 0: # pretraining
+        if i == 0: # pretraining
             train_set, val_set = inc_data.start_task()    
-            _train(model, optimizer, train_set, val_set, num_epoch=num_epoch_pretrain, session_idx=0, start_epoch=start_epoch)    
+            _train(model, optimizer, train_set, val_set, num_epoch=num_epoch_pretrain, session_idx=0, start_epoch=start_epoch)                
             start_epoch = 0
                            
-        else:                                
+        else:                                            
             train_set, val_set = inc_data.new_task()
             # freeze pretrained model
             for name, module in model.named_children():
