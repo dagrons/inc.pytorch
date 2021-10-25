@@ -5,7 +5,6 @@ from PIL import Image
 import os 
 import numpy as np
 
-
 class MalwareImgDataset(Dataset):
     """
     Dataset for Malware Imgs
@@ -40,7 +39,7 @@ class MalwareImgDataset(Dataset):
                 fpath = os.path.join(label_path, fname)
                 self.data.append(fpath)
                 self.labels.append(label)                       
-        idx2class = list(set(self.labels))
+        idx2class = list(sorted(set(self.labels)))
         self.labels = [idx2class.index(y) for y in self.labels]
         
 
@@ -138,7 +137,7 @@ class IncrementalDataset:
     start_task():
         generate train_dataset and test_dataset for pretraining session
     """
-    def __init__(self, dataset_name, data_folder, start_num_class, num_class_per_session, val_ratio=0.2, test_ratio=0.2):        
+    def __init__(self, dataset_name, data_folder, start_num_class, num_class_per_session, val_ratio=0.2, test_ratio=0.2, batch_size=64):        
         # data folder and dataset name
         self.data_foler = data_folder
         self.dataset_name = dataset_name         
@@ -163,6 +162,9 @@ class IncrementalDataset:
         self.num_sessions = 1 + (self.n_cls - self.start_num_class) // num_class_per_session
         self.current_session = 0
 
+        # batch size
+        self.batch_size = batch_size
+
     def start_task(self):
         """
         Sample start task for pretraining 
@@ -180,11 +182,9 @@ class IncrementalDataset:
         y_val = [self.class_order.index(i) for i in y_val]                  
         self.current_class_idx += self.start_num_class    
         self.current_session += 1                            
-        train_set = DummyDataset(x_train, y_train)
-        train_loader = DataLoader(train_set, batch_size=64, shuffle=True)
-        val_set = DummyDataset(x_val, y_val)
-        val_loader = DataLoader(val_set, batch_size=64, shuffle=True)
-        return train_loader, val_loader
+        train_set = DummyDataset(x_train, y_train)        
+        val_set = DummyDataset(x_val, y_val)        
+        return train_set, val_set
 
     def new_task(self):
         """
@@ -206,11 +206,10 @@ class IncrementalDataset:
         y_val = [self.class_order.index(i) for i in y_val]
         self.current_class_idx += self.num_class_per_session        
         self.current_session += 1     
-        train_set = DummyDataset(x_train, y_train)
-        train_loader = DataLoader(train_set, batch_size=64, shuffle=True)
-        val_set = DummyDataset(x_val, y_val)
-        val_loader = DataLoader(val_set, batch_size=64, shuffle=True)
-        return train_loader, val_loader
+        train_set = DummyDataset(x_train, y_train)        
+        val_set = DummyDataset(x_val, y_val)        
+        return train_set, val_set
+
     
     @staticmethod
     def select_from(x, y, selected_classes):
@@ -283,12 +282,14 @@ class IncrementalDataset:
         return x_train, y_train, x_val, y_val, x_test, y_test
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":    
+    from utils import set_random_seed
+    set_random_seed()
     inc_dataset = IncrementalDataset("bodmas_top50", "data/bodmas_top50", 20, 5, 0.2, 0.2)
     # start task
-    x_train, y_train, x_val, y_val = inc_dataset.start_task()
-    print (f"train: {len(x_train)}, val: {len(x_train)}")
+    train_loader, val_loader = inc_dataset.start_task()
+    print (f"train: {len(train_loader)}, val: {len(val_loader)}")
     # new task
     for i in range(1, inc_dataset.num_sessions):
-        x_train, y_train, x_val, y_val = inc_dataset.new_task()
-        print (f"train: {len(x_train)}, val: {len(x_train)}")
+        train_loader, val_loader = inc_dataset.new_task()
+        print (f"train: {len(train_loader)}, val: {len(val_loader)}")
