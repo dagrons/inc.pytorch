@@ -10,17 +10,19 @@ from data import IncrementalDataset
 from tqdm import tqdm
 from model import IncResNet
 from PIL import ImageFile
+from utils import set_random_seed
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 writer = SummaryWriter(comment = "malware_classification%resnet34")          
 ex = Experiment("malware_classification_resnet34")
 
 @ex.config
 def cfg():
-    num_epoch_pretrain = 1
-    num_epoch_inc_train = 2
-    start_num_class = 20
+    num_epoch_pretrain = 20
+    num_epoch_inc_train = 10
+    start_num_class = 30
     num_class_per_session = 5
     val_ratio = 0.2
     test_ratio = 0.2
@@ -32,6 +34,7 @@ def cfg():
     lr = 1e-3
     device_ids = [0, 1]
     num_workers=4      
+    seed = 11
 
 @ex.command
 def train(
@@ -41,17 +44,18 @@ def train(
     num_class_per_session,
     val_ratio,
     test_ratio,
-    n_cls,
+    n_cls, 
     num_epoch_pretrain,
     num_epoch_inc_train,    
     batch_size,
     device_ids,       
     lr,
+    seed,
     ckpt_path = None,    
-):  
-
+):      
+    set_random_seed(seed)
     inc_data = IncrementalDataset(dataset_name, data_folder, start_num_class=start_num_class, num_class_per_session=num_class_per_session, val_ratio=val_ratio, test_ratio=test_ratio, batch_size=batch_size)
-    model = IncResNet(num_block=[3, 4, 6, 3], base_num_classes=20).to(device)    
+    model = IncResNet(num_block=[3, 4, 6, 3], base_num_classes=30).to(device)    
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)    
 
     start_session = 0
@@ -80,7 +84,7 @@ def train(
             train_set, val_set = inc_data.new_task()
             # freeze pretrained model
             for name, module in model.named_children():
-                if name != "fc":
+                if name != "fc" or name != "fc_middle":
                     for param in module.parameters():
                         param.requires_grad = False              
             model.add_classes(num_class_per_session)    
@@ -126,7 +130,7 @@ def _train(
 
             optim.zero_grad()    
             y_pred = model(x)
-            loss = criterion(y_pred, y)            
+            loss = criterion(y_pred, y)              
             loss.backward()
             optim.step()            
 
