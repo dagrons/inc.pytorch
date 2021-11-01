@@ -282,9 +282,7 @@ class IncrementalDataset:
         return x_train, y_train, x_val, y_val, x_test, y_test
 
 
-if __name__ == "__main__":    
-    from utils import set_random_seed
-    set_random_seed()
+if __name__ == "__main__":        
     inc_dataset = IncrementalDataset("bodmas_top50", "data/bodmas_top50", 20, 5, 0.2, 0.2)
     # start task
     train_loader, val_loader = inc_dataset.start_task()

@@ -11,30 +11,33 @@ from tqdm import tqdm
 from model import IncResNet
 from PIL import ImageFile
 from utils import set_random_seed
+from sacred.observers import MongoObserver
+from sacred.utils import apply_backspaces_and_linefeeds
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")
-writer = SummaryWriter(comment = "malware_classification%resnet34")          
+
 ex = Experiment("malware_classification_resnet34")
+ex.observers.append(MongoObserver.create(url=f'mongodb://sample:password@localhost:27017/?authMechanism=SCRAM-SHA-1',
+                     db_name='db'))
+ex.captured_out_filter = apply_backspaces_and_linefeeds
 
 @ex.config
 def cfg():
-    num_epoch_pretrain = 20
+    num_epoch_pretrain = 40
     num_epoch_inc_train = 10
-    start_num_class = 30
+    start_num_class = 50
     num_class_per_session = 5
     val_ratio = 0.2
-    test_ratio = 0.2
+    test_ratio = 0.0
     dataset_name = "bodmas_top50"
-    data_folder = "data/bodmas_top50"    
+    data_folder = "data/bodmas_top50_resized"    
     n_cls = 50
-    batch_size=128
+    batch_size=64
     ckpt_save_folder = "./ckpt"  
-    lr = 1e-3
-    device_ids = [0, 1]
+    lr = 1e-3    
     num_workers=4      
-    seed = 11
+    seed = 10
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 @ex.command
 def train(
@@ -48,14 +51,14 @@ def train(
     num_epoch_pretrain,
     num_epoch_inc_train,    
     batch_size,
-    device_ids,       
     lr,
     seed,
-    ckpt_path = None,    
+    device,
+    ckpt_path = None,        
 ):      
     set_random_seed(seed)
     inc_data = IncrementalDataset(dataset_name, data_folder, start_num_class=start_num_class, num_class_per_session=num_class_per_session, val_ratio=val_ratio, test_ratio=test_ratio, batch_size=batch_size)
-    model = IncResNet(num_block=[3, 4, 6, 3], base_num_classes=30).to(device)    
+    model = IncResNet(num_block=[3, 4, 6, 3, 4, 6], base_num_classes=start_num_class).to(device)    
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)    
 
     start_session = 0
@@ -81,18 +84,16 @@ def train(
             start_epoch = 0
                            
         else:                                            
-            train_set, val_set = inc_data.new_task()
+            train_set, val_set = inc_data.new_task()            
             # freeze pretrained model
-            for name, module in model.named_children():
-                if name != "fc" or name != "fc_middle":
-                    for param in module.parameters():
-                        param.requires_grad = False              
+            # for name, module in model.named_children():
+            #     if name != "fc" or name != "fc_middle":
+            #         for param in module.parameters():
+            #             param.requires_grad = False              
             model.add_classes(num_class_per_session)    
             model = model.to(device) # to device after add new modules
             _train(model, optimizer, train_set, val_set, num_epoch=num_epoch_inc_train, session_idx=i, start_epoch=start_epoch)            
-            start_epoch = 0
-
-    writer.close()
+            start_epoch = 0    
 
     
 @ex.capture
@@ -106,7 +107,8 @@ def _train(
     start_epoch,
     batch_size,     
     num_workers,   
-    ckpt_save_folder,    
+    ckpt_save_folder, 
+    device   
 ):
 
     optim = optimizer
@@ -114,14 +116,14 @@ def _train(
     step = 0
     for ep in range(start_epoch, num_epoch):
         # training 
-        model.train()
+        model.train()        
         criterion = nn.CrossEntropyLoss()        
-                
-        # data
+
+        # data        
         train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         loop = tqdm(enumerate(train_loader), total=len(train_loader))
-        
+                
         for idx, data in loop:
             x, y = data
             y = torch.from_numpy(np.asarray(y, dtype=np.long))
@@ -130,17 +132,35 @@ def _train(
 
             optim.zero_grad()    
             y_pred = model(x)
-            loss = criterion(y_pred, y)              
+            loss = criterion(y_pred, y) # total loss                     
             loss.backward()
-            optim.step()            
+            optim.step()                                                                 
 
-            writer.add_scalar(f"Training_Loss_{session_idx}", loss.item(), step)
+            ex.log_scalar(f"Training_Loss_{session_idx}", loss.item(), step)
             step += 1
             loop.set_description(f"SESSION_{session_idx}-Epoch [{ep} / {num_epoch}]")
-            loop.set_postfix(loss=loss.item())
+            loop.set_postfix(loss=loss.item())                
+
+        # train acc        
+        model.eval()
+        correct = 0
+        total = 0
+        for x, y in train_loader:                        
+            y = torch.from_numpy(np.asarray(y, dtype=np.long))
+            x = x.to(device)                    
+            y = y.to(device)
+            y_pred = model(x)
+            prediction = torch.argmax(y_pred, 1)
+            #if session_idx >= 1 and ep >= 8:
+            #    import pdb; pdb.set_trace()            
+            for i in range(len(y)):
+                correct += (prediction == y).sum()
+                total += len(y)                           
+        # compute training acc           
+        train_acc = correct / total          
 
         # validation
-        model.eval()
+        model.eval()        
         correct = 0
         total = 0
         with torch.no_grad():
@@ -155,9 +175,11 @@ def _train(
                 for i in range(len(y)):
                     correct += (prediction == y).sum()
                     total += len(y)        
-            acc = correct / total        
-            writer.add_scalar(f"Validation_Acc_{session_idx}", acc, ep)        
-            loop.set_postfix(acc=acc)
+            val_acc = correct / total                    
+
+            # write            
+            ex.log_scalar(f"Traingin_Acc_{session_idx}", train_acc, ep)
+            ex.log_scalar(f"Validation_Acc_{session_idx}", val_acc, ep)
 
         # save ckpt
         if not os.path.exists(ckpt_save_folder):
@@ -167,7 +189,7 @@ def _train(
             'epoch': ep,            
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optim.state_dict()            
-        }, os.path.join(ckpt_save_folder, f"ckpt-session_{session_idx}-ep_{ep}-acc_{acc}"))
+        }, os.path.join(ckpt_save_folder, f"ckpt-session_{session_idx}-ep_{ep}-acc_{val_acc}"))
         
         
 if __name__ == "__main__":

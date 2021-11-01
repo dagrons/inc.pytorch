@@ -57,7 +57,9 @@ class IncResNet(nn.Module):
         self.conv_block2 = self.generate_layer(128, num_block[1], 2) # (in_channels, H, W) => (128, H/2, W/2)
         self.conv_block3 = self.generate_layer(256, num_block[2], 2) # (in_channels, H, W) => (256, H/2, W/2)
         self.conv_block4 = self.generate_layer(512, num_block[3], 2) # (in_channels, H, W) => (512, H/2, W/2)
-        
+        self.conv_block5 = self.generate_layer(512, num_block[4], 2) # (in_channels, H, W) => (512, H/2, W/2)
+        self.conv_block6 = self.generate_layer(512, num_block[5], 2) # (in_channels, H, W) => (512, H/2, W/2)
+
         self.avg_pool = nn.AvgPool2d(kernel_size=7, stride=1, padding=3) # (H, W) => (H, W)
         
         self.fc = nn.Linear(512, base_num_classes) # 512 => 9 
@@ -102,16 +104,18 @@ class IncResNet(nn.Module):
         output = self.conv_block2(output)
         output = self.conv_block3(output)
         output = self.conv_block4(output)
+        output = self.conv_block5(output)
+        output = self.conv_block6(output)
         output = self.avg_pool(output)
-        output = output.view(output.size(0), -1) # padding         
+        output = output.view(output.size(0), -1) # padding                 
         output = self.fc(output)
         
         return output
 
 
 if __name__ == "__main__":
-    model = IncResNet(num_block=[3, 4, 6, 3], base_num_classes=20)
-    #print (model)    
+    model = IncResNet(num_block=[3, 4, 6, 3, 4, 6], base_num_classes=20)
+    print (model)    
     for name, module in model.named_children():
         print (name)
-    #summary(model, input_size=(10, 3, 64, 64))
+    summary(model, input_size=(10, 3, 224, 224))
